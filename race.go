@@ -7,7 +7,6 @@ import (
     "strings"
     "github.com/PuerkitoBio/goquery"
     "log"
-    "sync"
   )
 
 type node struct {
@@ -16,7 +15,7 @@ type node struct {
   parent *node
 }
 
-var prefixes = [...]string{"/wiki/Main_Page", "/wiki/Special","/wiki/File","/wiki/Help"}
+var prefixes = [...]string{"/wiki/Main_Page", "/wiki/Special","/wiki/File","/wiki/Help","/wiki/Wikipedia:"}
 
 func checkListOfPrefixes(href string)bool{
   for _, prefix := range prefixes{
@@ -36,10 +35,13 @@ func processElement(index int, element *goquery.Selection)(string) {
   return ""
 }
 
-func getNewLinks(a node, q []node,path_num int)[]node {
+func getNewLinks(a node, out chan<- []node,path_num int){
+  q := make([]node,0)
   resp, err := http.Get(a.url)
   if err != nil{
-    log.Fatal("Error getting page", err)
+    log.Print("Error getting page", err)
+    out <- q
+    return
   }
   document, queryError := goquery.NewDocumentFromReader(resp.Body)
   if queryError != nil {
@@ -51,7 +53,7 @@ func getNewLinks(a node, q []node,path_num int)[]node {
         q = append(q, node{url:link,path:path_num,parent:&a})
       }
   }
-  return q
+  out <- q
 }
 
 
@@ -100,9 +102,18 @@ func FindShortestWikiPath(article1 string, article2 string)(string, string){
       next_q2 = make([]node, 0)
       paths := make([]string, 0)
 
+      out1 := make(chan []node)
+      out1Count := 0
+      out2 := make(chan []node)
+      out2Count := 0
+
+      //fmt.Println(len(q1))
+      //fmt.Println(len(q2))
+
       for len(q1) > 0 || len(q2) > 0{
         var val node
         var found bool
+
         if len(q1) > 0{
            a1, q1 = q1[0], q1[1:]
            if val, found = m[a1.url]; found && val.path != 1 {
@@ -110,7 +121,8 @@ func FindShortestWikiPath(article1 string, article2 string)(string, string){
             }
             if !found {
               m[a1.url] = a1
-              next_q1 = getNewLinks(a1,next_q1,1)
+              out1Count += 1
+              go getNewLinks(a1, out1, 1)
             }
         }
 
@@ -121,11 +133,12 @@ func FindShortestWikiPath(article1 string, article2 string)(string, string){
            }
           if !found{
            m[a2.url] = a2
-           next_q2 = getNewLinks(a2,next_q2,2)
+           out2Count +=1
+           go getNewLinks(a2, out2, 2)
           }
         }
        }
-       fmt.Println(paths)
+       // fmt.Println("/////////////////////////////////////////////////////////////////////////////")
        if len(paths) != 0 {
          shortestLength := len(paths[0])
          index := 0
@@ -136,6 +149,13 @@ func FindShortestWikiPath(article1 string, article2 string)(string, string){
            }
          }
          return paths[index], ""
+       }
+       for i := 0; i < out1Count; i++ {
+         next_q1 = append(next_q1, <-out1...)
+      }
+
+       for i := 0; i < out2Count; i++ {
+         next_q2 = append(next_q2, <-out2...)
        }
 
    }
@@ -174,7 +194,7 @@ func main() {
   }
 
   path, _ := FindShortestWikiPath(article1,article2)
-  fmt.Println(path)
+  fmt.Println("Path: ",path)
 
 
 }
